@@ -1,0 +1,1650 @@
+//motora = forklift, motorb = vertical, motorc = rotation
+//level 1 = red, level 2 = blue, level 3 = yellow
+//motor b positive raises, negative lowers
+char A = 'A', B ='B', C = 'C'; //used in rotate function
+int currentlevel = 0; //keeps track of what level the forklift is 
+						//on
+bool isFull[2][4]; //true if the space is full, false if empty
+
+void rotate (int degrees, char wheel)//general rotate function
+{
+	if (wheel == 'A')//Mainly written by Rohan Agarwal
+	{
+		int x = nMotorEncoder[motorA] + degrees;
+		if (degrees < 0)
+		{
+			while (nMotorEncoder[motorA] > x)
+				motor[motorA] = -20;
+		}
+		else
+		{
+			while (nMotorEncoder[motorA] < x)
+				motor[motorA] = 20;
+		}
+		motor[motorA] = 0;
+	}
+	else if (wheel == 'B')
+	{
+		int x = nMotorEncoder[motorB] + degrees;
+		if (degrees < 0)
+		{
+			while (nMotorEncoder[motorB] > x)
+				motor[motorB] = -20;
+		}
+		else
+		{
+			while (nMotorEncoder[motorB] < x)
+				motor[motorB] = 20;
+		}
+		motor[motorB] = 0;
+	}
+	else
+	{
+		int x = nMotorEncoder[motorC] + degrees;
+		if (degrees < 0)
+		{
+			while (nMotorEncoder[motorC] > x)
+				motor[motorC] = -15;
+		}
+		else
+		{
+			while (nMotorEncoder[motorC] < x)
+				motor[motorC] = 15;
+		}
+		motor[motorC] = 0;
+	}
+}
+
+void extendLift ()
+{
+	rotate (810, A);
+}
+
+void retractLift ()
+{
+	rotate(-810, A);
+}
+
+void pickUp ()//extends prongs, then lifts up and retracts before
+			//going back down
+{
+	extendLift();
+	rotate(150, B);
+	retractLift();
+	rotate(-150, B);
+}
+
+void dropOff ()//lifts up first then extends to drop off skids
+{
+	rotate(150, B);
+	extendLift();
+	rotate(-150, B);
+	retractLift();
+}
+
+void turn (int shelf)//shelves 0-3 (4 shelves total)
+{
+	int rotation = shelf*500; //500 encoder counts between each 
+							//shelf
+	rotate ((rotation-nMotorEncoder[motorC]), C);
+}
+
+void vertical (int level)//levels 0 or 1
+						//mainly written by Nigel Pereira
+{
+	bool overshoot = false; //if colour sensing doesnt work this 
+				//changes to true to retry
+	if (level==1 && currentlevel ==0)//do nothing if already on 
+								//the level
+	{
+		do
+		{
+			while(SensorValue[S3]!=WHITECOLOR && 
+				nMotorEncoder[motorB]<=800)
+			{
+				motor[motorB] = 20;
+			}
+			if (nMotorEncoder[motorB]>=800)//800 counts from top 
+										//to bottom
+			{
+				overshoot=true;
+				rotate(-800, B);
+			}
+			else
+			{
+				overshoot=false;
+			}
+		}while(overshoot);
+		currentlevel=1;
+	}
+
+	else if (level==0 && currentlevel==1)
+	{
+		do
+		{
+			while(SensorValue[S3]!=REDCOLOR && 
+				nMotorEncoder[motorB]>=0)
+			{
+				motor[motorB] = -20;
+			}
+			if (nMotorEncoder[motorB]<=0)
+			{
+				overshoot=true;
+				rotate(800, B);
+			}
+			else
+			{
+				overshoot=false;
+			}
+		}while(overshoot);
+		currentlevel=0;
+	}
+	motor[motorB]=0;
+}
+
+void fullPosition(int level, int shelf, bool place) //place is 
+	//true if picking up skid, false if dropping off object
+{
+	turn(shelf);
+	vertical(level);
+	if (place)
+	{
+		pickUp();
+	}
+	else
+	{
+		dropOff();
+	}
+	vertical(0);//return to base point
+	turn(0);
+}
+
+int setTimer(int timer, int min10, int min1)
+{
+	int minutes = min10*10 + min1; //number of minutes total
+
+	if(timer==0)
+	{
+		clearTimer(T1);
+	}
+	else if(timer==1)
+	{
+		clearTimer(T2);
+	}
+	else if(timer==2) //sets row 1 column 1
+	{
+		clearTimer(T3);
+	}
+	else if (timer==3) //sets row 2 column 1
+	{
+		clearTimer(T4);
+	}
+	return minutes*60*10; //returns the minute value in 100msecs
+}
+
+void startup()//used to check and update the storage system
+				//mainly written by Mustafa Shahbaz
+{
+	rotate(-100, C);//to line up the ultrasonic sensor with the 
+				//skids
+	for(int i = 0; i<2; i++)
+	{
+		for (int j = 0; j<4;j++)
+		{
+			int x = time1[T1];//doesn't override the timer, 
+			//won't interfere with set timers
+			while(time1[T1]<x+2000) //for 2 seconds, the 
+			//ultrasonic will try to detect an object
+			{
+				if(SensorValue[S4]<=225 && !isFull[i][j])//if the
+			//space wasn't already full
+/*Was coded like this because the ultrasonic sensor was very 
+buggy during testing. However, it consistently went under 225 
+for a splitsecond when there was an object on the skid. It 
+stayed at 255 when there was not an object on the skid */	
+				{
+					isFull[i][j]=true;
+					playSound(soundBlip); //audio indicator that 
+					//an object was detected
+					if(i==0 && j==0)//if an object is detected 
+		//in the first shelf, automatically set the preset timer
+					{
+						setTimer(2,1,5);
+					}
+					else if (i==1 && j==0)
+					{
+						setTimer(3,3,0);
+					}
+				}
+			}
+			if(j<3)//moves from space to space
+			{
+				rotate(500, C);
+			}
+		}
+		rotate(-1500, C);//return to leftmost shelf
+		vertical(1);// raise to second level
+		//won't raise when already on second level
+	}
+	vertical(0); //lower back to first level
+	rotate(100, C);//return to base point in front of skid
+}
+
+task main()//written by all group members together, mainly by 
+//Kanvardeep Rakhraj
+{
+	int numtimers=0; //keeps track of the number of timers in use
+	int reminder1, reminder2, reminder3, reminder4;
+						//the timer values
+	int timedrow1, timedcolumn1, timedrow2, timedcolumn2; 
+			//the row/column values of the timed objects
+	char alphabet[26] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+	'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+	'U', 'V', 'W', 'X', 'Y', 'Z'}; 
+	//used to display letters when the user is inputting 
+	//codenames
+
+	char code1[2][4]; //stores the individual characters of each 
+						//codename
+	char code2[2][4];
+	char code3[2][4];
+
+	for (int i = 0; i<2; i++)//initializes all the 
+							//spaces as empty
+	{
+		for(int j = 0; j<4; j++)
+		{
+			isFull[i][j] = false;
+		}
+	}
+
+	setSensorType(S3,sensorColorNxtFULL);
+	setSensorType(S4,sensorSONAR);
+	nMotorEncoder[motorA]=0;
+	nMotorEncoder[motorB]=0;
+	nMotorEncoder[motorC]=0;
+
+
+ 	startup();//will run the startup function to detect any 
+	 		//placed objects
+
+	int mainscreen=0;//initializes the main menu variable
+
+	while (nNxtButtonPressed!=0)//entire program runs while the 
+						//user doesn't push the off button
+	{
+		while (nNxtButtonPressed==-1)//every loop runs until a 
+								//button is pressed
+		{
+			//four checks to see if any of the timers are up
+			if(time100[T1]>reminder1 && 
+				isFull[timedrow1][timedcolumn1])		
+			{
+				eraseDisplay();
+				for(int i=0; i<3; i++)//play a tune to alert 
+										//user(s)
+				{
+					playSound(soundDownwardTones);
+					wait1Msec(1000);
+				}
+				fullPosition(timedrow1,timedcolumn1,1);//go to 
+						//the space and pick up object
+				while(nNxtButtonPressed!=3)
+				{
+					displayString(0,"Press middle");
+					displayString(1,"button when");
+					displayString(2,"object has been");
+					displayString(3,"picked up");
+				}
+				while(nNxtButtonPressed==3)
+				{}
+				eraseDisplay();
+				isFull[timedrow1][timedcolumn1] = false;
+//empty the space
+				code1[timedrow1][timedcolumn1]='\0';//clear the 
+							//codename values
+				code2[timedrow1][timedcolumn1]='\0';
+				code3[timedrow1][timedcolumn1]='\0';
+				fullPosition(timedrow1,timedcolumn1,0);
+//return empty skid to its space
+				numtimers--;//frees up a timer slot for use
+			}
+			else if(time100[T2]>reminder2 && 
+				isFull[timedrow2][timedcolumn2])
+			{
+				eraseDisplay();
+				for(int i=0; i<3; i++)
+				{
+					playSound(soundDownwardTones);
+					wait1Msec(1000);
+				}
+				fullPosition(timedrow2, timedcolumn2,1);
+				while(nNxtButtonPressed!=3)
+				{
+					displayString(0,"Press middle");
+					displayString(1,"button when");
+					displayString(2,"object has been");
+					displayString(3,"picked up");
+				}
+				while(nNxtButtonPressed==3)
+				{}
+				eraseDisplay();
+				isFull[timedrow2][timedcolumn2] = false;
+				code1[timedrow2][timedcolumn2]='\0';
+				code2[timedrow2][timedcolumn2]='\0';
+				code3[timedrow2][timedcolumn2]='\0';
+				fullPosition(timedcolumn2, timedrow2, 0);
+				numtimers--;
+			}
+			else if(time100[T3]>reminder3 && isFull[0][0])
+			{
+				eraseDisplay();
+				for(int i=0; i<3; i++)
+				{
+					playSound(soundDownwardTones);
+					wait1Msec(1000);
+				}
+				fullPosition(0,0,1);
+				while(nNxtButtonPressed!=3)
+				{
+					displayString(0,"Press middle");
+					displayString(1,"button when");
+					displayString(2,"object has been");
+					displayString(3,"picked up");
+				}
+				while(nNxtButtonPressed==3)
+				{}
+				eraseDisplay();
+				isFull[0][0] = false;
+				code1[0][0]='\0';
+				code2[0][0]='\0';
+				code3[0][0]='\0';
+				fullPosition(0,0,0);
+			}
+			else if(time100[T4]>reminder4 && isFull[1][0])
+			{
+				eraseDisplay();
+				for(int i=0; i<3; i++)
+				{
+					playSound(soundDownwardTones);
+					wait1Msec(1000);
+				}
+				fullPosition(1,0,1);
+				while(nNxtButtonPressed!=3)
+				{
+					displayString(0,"Press middle");
+					displayString(1,"button when");
+					displayString(2,"object has been");
+					displayString(3,"picked up");
+				}
+				while(nNxtButtonPressed==3)
+				{}
+				eraseDisplay();
+				isFull[0][1] = false;
+				code1[0][1]='\0';
+				code2[0][1]='\0';
+				code3[0][1]='\0';
+				fullPosition(1,0,0);
+			}
+			//beginning of the interfacing code
+			if (mainscreen==0)//displays different text 
+					//depending on what mainscreen's value is
+			{
+				displayString(0, "Place an object");
+			}
+			else if (mainscreen==1)
+			{
+				displayString(0, "Retrieve object");
+			}
+			else if (mainscreen==2)
+			{
+				displayString(0, "Modify codename");
+			}
+			else if (mainscreen==3)
+			{
+				displayString(0, "Set timer");
+			}
+			else if (mainscreen==4)
+			{
+				displayString(0, "Update storage");
+			}
+		}
+		if(nNxtButtonPressed==1)//changes mainscreen's value
+		{
+			while(nNxtButtonPressed==1)//wait for button release
+			{}
+			mainscreen++;
+			if (mainscreen==5)//if the user presses the right 
+				//button at the end of the options, 
+				//loop back around to the first option
+			{
+				mainscreen=0;
+			}
+			eraseDisplay();
+		}
+		else if(nNxtButtonPressed==2)
+		{
+			while(nNxtButtonPressed==2)
+			{}
+			mainscreen--;
+			if(mainscreen==-1)//if the user presses left at the 
+					//beginning, loop to the last option
+			{
+				mainscreen=4;
+			}
+			eraseDisplay();
+		}
+		else if (nNxtButtonPressed==3)//selection is made
+		{
+			while (nNxtButtonPressed==3)
+			{}
+			if(mainscreen==0)//Place object branch selected
+			{
+				//temporary variables are set up to assist in 
+				//the process
+				int placescreen = 1, letter = 0, row = 1, 
+								column = 1;
+				char codeLetter1, codeLetter2, codeLetter3;
+				bool placeComplete = false;
+				eraseDisplay();
+				while(nNxtButtonPressed!=0 && !placeComplete)
+				{
+					while(nNxtButtonPressed==-1 && 
+							placescreen==1)//enter
+								// codename letter 1
+					{
+						displayString(0, "Letter 1:");
+displayString(1, "%c", alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+//scrolls up through letters
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+//if letter is z and user 
+						//presses right, displays a
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+//if letter is a and user 
+						//presses left, displays z
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)//if selection 
+									//is made
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter1 = alphabet[letter];
+//sets the /irst temp letter
+						placescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+						placescreen==2)
+//enter codename letter 2
+					{
+						displayString(0, "Letter 2:");
+						displayString(1, "%c%c", codeLetter1, 
+							alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter2 = alphabet[letter];
+//sets the second temp letter
+						placescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+						placescreen==3) 
+//enter codename letter 3
+					{
+displayString(0, "Letter 3:");	displayString(1, "%c%c%c",
+codeLetter1, codeLetter2, alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter3 = alphabet[letter];
+//sets third temp letter
+						placescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+					if(placescreen==4)
+					{
+						bool match = false; //used to check if 
+							//codename is already in use
+						for(int i=0; i<2; i++)
+						{
+							for(int j=0; j<4; j++)
+							{
+if (code1[i][j]==codeLetter1 && code2[i][j]==codeLetter2 && 
+								code3[i][j]==codeLetter3)
+								{
+									match=true;
+								}
+							}
+						}
+						if(match)
+//if codename is already being used
+						{
+							displayString(0, "Codename is");							displayString(1, "already in										 use);
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							placeComplete=true;
+//exits the branch
+							//and returns user to main menu
+							placescreen=7;
+						}
+					}
+					while(nNxtButtonPressed==-1 && 
+						placescreen == 4)//enter row
+					{
+						displayString(0,"Which space?");
+						displayString(1, "Row:%i Column:%i", 
+								row, column);
+					}
+					if(nNxtButtonPressed==1)
+//scroll through rows
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						row++;
+						if(row==3)//if displayed row is 1 and 
+							//user pushes right, displays 0
+						{
+							row=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						row--;
+						if(row==0)//if displayed row is 0 and 
+						//user pushes left, displays 1
+						{
+							row=2;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)//selection is made
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						placescreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							placescreen==5)
+									//enter column
+					{
+						displayString(0, "Which space?");
+						displayString(1, "Row:%i Column:%i", 
+								row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						column++;
+						if(column==5)
+						{
+							column=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						column--;
+						if(column==0)
+						{
+							column=4;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						placescreen++;
+						eraseDisplay();
+					}
+					while(placescreen==6)
+					{
+						if(isFull[row-1][column-1] == true && 
+							placescreen==6)
+							//if space already full
+						{
+							displayString(0, "Space is");
+							displayString(1, "already									 full");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							placeComplete=true;
+//returns user to main menu
+							placescreen++;
+						}
+						else if (isFull[row-1][column-1]								==false && placescreen==6)
+							//if space is empty
+						{
+							code1[row-1][column-										1]=codeLetter1; 
+							code2[row-1][column-										1]=codeLetter2;
+							code3[row-1][column-										1]=codeLetter3;
+							//writes in codename
+
+							isFull[row-1][column-1]=true;
+							//updates array to show space is							//full
+							fullPosition(row-1,column-1,1);
+							//gets skid from specified space
+							while(nNxtButtonPressed!=3)
+							{
+								displayString(0,"Press 										middle");
+								displayString(1,"button										 when");
+								displayString(2,"object										 has been");
+								displayString(3,"placed");
+							}
+							while(nNxtButtonPressed==3)
+							{}
+							eraseDisplay();
+							fullPosition(row-1,column-1,0);
+							//returns skid to space with 
+							//object on it
+							placescreen++;
+							placeComplete=true;
+//returns user to main menu
+							if (row==1&&column==1)
+//sets 15 minute preset timer //for first space
+							{
+								reminder3=setTimer(2, 1, 											5); 
+							}
+							else if(row==2&&column==1)
+//sets 30 minute preset timer //for second space
+							{
+reminder4=setTimer(3, 3, 			0);
+							}
+						}
+					}
+				}
+			}
+			else if(mainscreen==1)//if retrieve object was 
+					//selected in main menu
+			{
+				while (nNxtButtonPressed==3)
+				{}
+				//retrieve object procedure
+				//setting up temporary variables
+				int retrievescreen = 1, letter = 0, row = 1, 
+						column = 1, 
+				retrievemainscreen = 1;
+				char codeLetter1, codeLetter2, codeLetter3;
+				bool retrieveComplete = false;
+				eraseDisplay();
+				while(nNxtButtonPressed!=0 && !retrieveComplete)
+				{
+					while(retrievescreen==1 && 
+						nNxtButtonPressed==-1)
+					//displays the two options
+					{
+						if(retrievemainscreen==1)
+						{
+							displayString(0,"Select by");
+							displayString(1,"space");
+						}
+						else if (retrievemainscreen==2)
+						{
+							displayString(0,"Select by");
+							displayString(1,"codename");
+						}
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)//scroll 
+								//forward through options
+						{}
+						retrievemainscreen++;
+						if (retrievemainscreen==3)
+						{
+							retrievemainscreen=1;
+						}
+						eraseDisplay();
+					}
+					else if(nNxtButtonPressed==2)//scroll 
+						//backward through options
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						retrievemainscreen--;
+						if(retrievemainscreen==-1)
+						{
+							retrievemainscreen=2;
+						}
+					}
+					else if (nNxtButtonPressed==3)
+//selection made
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						retrievescreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+						retrievemainscreen == 1 && 
+						retrievescreen ==2)//retrieve by space
+					
+					//enter row
+					{
+						displayString(0,"Which space?");
+						displayString(1, "Row:%i Column:%i", 
+									row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						row++;
+						if(row==3)
+						{
+							row=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						row--;
+						if(row==0)
+						{
+							row=2;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						retrievescreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							retrievescreen==3 && 
+							retrievemainscreen==1)
+//enter column
+					{
+						displayString(0, "Which space?");
+						displayString(1, "Row:%i Column:%i", 									row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						column++;
+						if(column==5)
+						{
+							column=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						column--;
+						if(column==0)
+						{
+							column=4;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						retrievescreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							retrievescreen==4 && 
+							retrievemainscreen==1)
+					{
+						if(isFull[row-1][column-1]==false)//if
+							//the specified space is empty
+						{
+							displayString(0,"Space is 										empty!");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							retrievescreen++;
+							retrieveComplete=true;
+//returns user to main menu
+						}
+						else
+						{
+							fullPosition(row-1,column-									1,1);
+//go pick up skid
+							while(nNxtButtonPressed!=3)
+							{
+								displayString(0,"Press 
+									middle");
+								displayString(1,"button 									when");
+								displayString(2,"object 									has been");
+								displayString(3,"picked 									up");
+							}
+							while(nNxtButtonPressed==3)
+							{}
+							eraseDisplay();
+							fullPosition(row-1,column-1,0);
+							//return skid to space
+							retrievescreen++;
+							retrieveComplete=true;
+//return user to main menu
+							isFull[row-1][column-1] = false;
+							//signifies space is empty now
+							code1[row-1][column-										1]='\0';//deletes codename
+							code2[row-1][column-1]='\0';
+							code3[row-1][column-1]='\0';
+						}
+					}
+					while(nNxtButtonPressed==-1 && 
+							retrievescreen==2 && 
+							retrievemainscreen==2)
+							//retrieve by codename
+					
+					//enter codename letter 1
+					{
+						displayString(0, "Letter 1:");
+						displayString(1, "%c", 										alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter1 = alphabet[letter];
+						retrievescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+						retrievescreen==3 && 
+						retrievemainscreen==2)
+						//enter codename letter 2
+					{
+						displayString(0, "Letter 2:");
+						displayString(1, "%c%c", codeLetter1, 
+							alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter2 = alphabet[letter];
+						retrievescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+						retrievescreen==4 && 
+						retrievemainscreen==2) 
+						//enter codename letter 3
+					{
+						displayString(0, "Letter 3:");
+						displayString(1, "%c%c%c", 									codeLetter1, codeLetter2, 								alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter3 = alphabet[letter];
+						retrievescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+					while(nNxtButtonPressed==-1 && 
+							retrievescreen==5 && 
+							retrievemainscreen==2)
+					{
+						bool match = false;
+						for(int i=0; i<2; i++)
+						{
+							for(int j=0; j<4; j++)
+							{
+								if 												(code1[i][j]==codeLetter1 								&& 
+								code2[i][j]==codeLetter2								 && 
+								code3[i][j]==codeLetter3)
+								//finds the space that 
+//matches the codename
+								{
+									match=true;
+									row=i;
+									column=j;
+								}
+							}
+						}
+						if(match)
+//if a matching space is found
+						{
+							fullPosition(row,column,1);
+								//retrieve object
+							while(nNxtButtonPressed!=3)
+							{
+								displayString(0,"Press										middle");
+								displayString(1,"button 									when");
+								displayString(2,"object										has been");
+								displayString(3,"picked 									up");
+							}
+							while(nNxtButtonPressed==3)
+							{}
+							eraseDisplay();
+							fullPosition(row,column,0);
+//return empty skid to space
+							retrievescreen++;
+							retrieveComplete=true;
+							//returns to main menu
+							isFull[row][column] = false;
+							//writes space as empty
+							code1[row][column]='\0';
+							//deletes codename
+							code2[row][column]='\0';
+							code3[row][column]='\0';
+						}
+						else//if no match found
+						{
+							displayString(0,"Invalid code");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							retrievescreen++;
+							retrieveComplete=true;
+							//returns to main menu
+						}
+					}
+				}
+
+			}
+			else if(mainscreen==2)//overwrite codename selected
+			{
+				while (nNxtButtonPressed==3)
+				{}
+				//overwrite procedure, allows user to write in a 
+			 	//new codename for an object
+				
+				//temporary variables declared
+				int overwritescreen = 1, letter = 0, row = 1, 
+									column = 1;
+				char codeLetter1, codeLetter2, codeLetter3;
+				bool overwriteComplete = false;
+				eraseDisplay();
+				while(nNxtButtonPressed!=0 && !overwriteComplete)
+				{
+					while(nNxtButtonPressed==-1 && 
+						overwritescreen==1)//enter row
+					{
+						displayString(0,"Specify space");
+						displayString(1, "Row:%i Column:%i", 
+										row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						row++;
+						if(row==3)
+						{
+							row=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						row--;
+						if(row==0)
+						{
+							row=2;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						overwritescreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+						overwritescreen==2)//enter column
+					{
+						displayString(0, "Specify space");
+						displayString(1, "Row:%i Column:%i", 
+										row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						column++;
+						if(column==5)
+						{
+							column=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						column--;
+						if(column==0)
+						{
+							column=4;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						overwritescreen++;
+						eraseDisplay();
+					}
+
+					while (nNxtButtonPressed!=0 && 
+							overwritescreen==3)
+					{
+
+						if (!isFull[row-1][column-1])
+								//if the space is empty
+						{
+							displayString(0,"Space is 										empty");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							overwritescreen=8;
+							overwriteComplete=true;
+							//return to main menu
+						}
+						else
+						{
+							overwritescreen++;
+//if space has an object, then //continue to next part 
+							//of branch
+						}
+					}
+					while(nNxtButtonPressed==-1 && 
+								overwritescreen==4)
+						//enter new codename letter 1
+					{
+						displayString(0, "Letter 1:");
+						displayString(1, "%c", 											alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter1 = alphabet[letter];
+						overwritescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							overwritescreen==5)
+							//enter codename letter 2
+					{
+						displayString(0, "Letter 2:");
+						displayString(1, "%c%c", codeLetter1, 
+								alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter2 = alphabet[letter];
+						overwritescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							overwritescreen==6) 
+							//enter codename letter 3
+					{
+						displayString(0, "Letter 3:");
+						displayString(1, "%c%c%c", 									codeLetter1, codeLetter2,								alphabet[letter]);
+					}
+					if (nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						letter++;
+						if(letter==26)
+						{
+							letter=0;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						letter--;
+						if(letter==-1)
+						{
+							letter=25;
+						}
+						eraseDisplay();
+					}
+					else if (nNxtButtonPressed==3)
+					{
+						while (nNxtButtonPressed==3)
+						{}
+						codeLetter3 = alphabet[letter];
+						overwritescreen++;
+						letter=0;
+						eraseDisplay();
+					}
+
+					if(overwritescreen==7)
+					{
+						bool match = false; //used to check if
+						//codename already in use
+						for(int i=0; i<2; i++)
+						{
+							for(int j=0; j<4; j++)
+							{
+								if 												(code1[i][j]==codeLetter1 								&& 
+								code2[i][j]==codeLetter2 								&& 
+								code3[i][j]==codeLetter3)
+								{
+									match=true;
+								//if codename is in use
+								}
+							}
+						}
+						if(match)
+						{
+							displayString(0, "Codename is");
+							displayString(1, "already in									 use");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							overwriteComplete=true;
+							//return to main menu
+							overwritescreen=8;
+						}
+					}
+
+					//if match is true, overwritescreen will 
+					//be 8, this code will not run
+					while(nNxtButtonPressed==-1 && 
+							overwritescreen==7)
+					{
+						code1[row-1][column-1]=codeLetter1;
+						//overwrites codename
+						code2[row-1][column-1]=codeLetter2;
+						code3[row-1][column-1]=codeLetter3;
+						overwriteComplete=true;
+						//returns to main menu
+						overwritescreen++;
+						displayString(0,"Success!");
+						wait1Msec(1000);
+						eraseDisplay();
+					}
+				}
+			}
+			else if (mainscreen==3)//set timer
+			{
+				while (nNxtButtonPressed==3)
+				{}
+				//declaring temp variables
+				int timerscreen = 1, row = 1, column = 1, 
+						min10=0, min1=1;
+				bool setTimerComplete = false;
+				eraseDisplay();
+
+				while(nNxtButtonPressed!=0 && !setTimerComplete)
+				{
+					while (nNxtButtonPressed!=0 && 
+								timerscreen==1)
+					{
+						if (numtimers==2)//if two timers have 
+							//already been set by the user
+						{
+							displayString(0,"All timers 											are");
+							displayString(1,"in use");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							timerscreen=9;
+							setTimerComplete=true;
+							//return to main menu
+						}
+						else
+						{
+							timerscreen++;
+						}
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							timerscreen==2)//enter row
+					{
+						displayString(0,"Specify space");
+						displayString(1, "Row:%i Column:%i", 									row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						row++;
+						if(row==3)
+						{
+							row=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						row--;
+						if(row==0)
+						{
+							row=2;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						timerscreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							timerscreen==3)//enter column
+					{
+						displayString(0, "Specify space");
+						displayString(1, "Row:%i Column:%i", 
+										row, column);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+						{}
+						column++;
+						if(column==5)
+						{
+							column=1;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						column--;
+						if(column==0)
+						{
+							column=4;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						timerscreen++;
+						eraseDisplay();
+					}
+
+					while (nNxtButtonPressed!=0 && 
+								timerscreen==4)
+					{
+
+						if (!isFull[row-1][column-1])
+								//if space is empty
+						{
+							displayString(0,"Space is 										empty");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							timerscreen=9;
+							setTimerComplete=true;
+						}
+						else if (column==1)//if user tries to 
+						//set a timer in the first shelf
+						{
+							displayString(0,"Cannot 									override");
+							displayString(1,"shelf 1 									timers");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							timerscreen=9;
+							setTimerComplete=true;
+						}
+						else
+						{
+							timerscreen++;
+							//progress down the branch
+						}
+					}
+					while(nNxtButtonPressed==-1 && 
+							timerscreen==5)//enter 10s digit
+					{
+						displayString(0,"Specify time:");
+						displayString(1, "%i%i minutes", 									,min10, min1);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+								//goes from 0-4
+						{}
+						min10++;
+						if(min10==5)
+						{
+							min10=0;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						min10--;
+						if(min10==-1)
+						{
+							min10=4;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						timerscreen++;
+						eraseDisplay();
+					}
+
+					while(nNxtButtonPressed==-1 && 
+							timerscreen==6)//enter 1s digit
+					{
+						displayString(0, "Specify time:");
+						displayString(1, "%i%i minutes",								 min10,min1);
+					}
+					if(nNxtButtonPressed==1)
+					{
+						while(nNxtButtonPressed==1)
+							//goes from 0-9
+						{}
+						min1++;
+						if(min1==10)
+						{
+							min1=0;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==2)
+					{
+						while(nNxtButtonPressed==2)
+						{}
+						min1--;
+						if(min1==-1)
+						{
+							min1=9;
+						}
+						eraseDisplay();
+					}
+					if(nNxtButtonPressed==3)
+					{
+						while(nNxtButtonPressed==3)
+						{}
+						timerscreen++;
+						eraseDisplay();
+					}
+					while (nNxtButtonPressed!=0 && 									timerscreen==7)
+					{
+
+						if (min10==0 && min1 ==0)
+						//if the user tries to set a 0 
+						//minute timer
+						{
+							displayString(0,"Invalid time");
+							playSound(soundLowBuzzShort);
+							wait1Msec(2000);
+							eraseDisplay();
+							timerscreen=9;
+							setTimerComplete=true;
+						}
+						else
+						{
+							timerscreen++;
+						}
+					}
+					while (nNxtButtonPressed!=0 && 
+							timerscreen==8)
+					{
+						if(numtimers==0)
+						//if there are no timers currently set
+						{
+							reminder1=setTimer(numtimers, 									min10, min1);
+							timedrow1 = row-1;
+							/*writes the values into the 
+							variables so the system knows 							which space to pick up the 								object from when the timer 								goes off */
+							timedcolumn1 = column-1;
+						}
+						else if(numtimers==1)
+						//if there is 1 timer already set
+						{
+							reminder2=setTimer(numtimers, 								min10, min1);
+							timedrow2=row-1;
+							timedcolumn2=column-1;
+						}
+						displayString(0,"Timer set");
+						wait1Msec(1000);
+						eraseDisplay();
+						timerscreen++;
+						setTimerComplete=true;
+					}
+				}
+			}
+			else if(mainscreen==4)
+			//the update storage option is selected
+			{
+				while (nNxtButtonPressed==3)
+				{}
+				eraseDisplay();
+				startup();//uses ultrasonic sensor to detect 
+				//objects and update the storage array
+			}
+		}
+	}
+}
